@@ -47,6 +47,7 @@ from .configs.config import (
     CARTPOLE_ADAM,
     CARTPOLE_REPLAY,
     CARTPOLE_CLIPPED,
+    CARTPOLE_LOCAL_TARGETS,
 )
 from .training import Trainer, TrainingMetrics, train_agent
 from .core.layers import LinearLayer, TanhActivation, Network
@@ -83,6 +84,7 @@ __all__ = [
     "CARTPOLE_ADAM",
     "CARTPOLE_REPLAY",
     "CARTPOLE_CLIPPED",
+    "CARTPOLE_LOCAL_TARGETS",
     # Convenience functions
     "train_agent",
     # Core components

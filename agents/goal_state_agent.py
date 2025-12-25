@@ -17,7 +17,7 @@ import numpy as np
 from ..core.layers import LinearLayer
 from ..core.losses import MSELoss, Loss
 from ..utils.optimizers import Optimizer, Adam, AdaptiveLR
-from ..utils.replay_buffer import ReplayBuffer
+from ..utils.replay_buffer import TransitionBuffer, GoalTransitionBuffer
 
 
 @dataclass
@@ -36,11 +36,17 @@ class AgentConfig:
         prediction_update_steps: Number of gradient steps per prediction update.
         use_adaptive_lr: Whether to scale learning rate by gradient magnitude.
         action_threshold: Threshold for converting continuous action to discrete.
-        use_replay_buffer: Whether to use experience replay for training.
-        replay_buffer_capacity: Maximum number of transitions to store.
-        replay_batch_size: Number of samples per training batch.
-        min_buffer_size: Minimum buffer size before training from buffer.
-        updates_per_step: Number of gradient updates per environment step.
+
+        # Two-buffer replay system:
+        # - TransitionBuffer for prediction module (world model)
+        # - GoalTransitionBuffer for action policy (uses local targets)
+        use_replay_buffer: Whether to use the two-buffer replay system.
+        replay_buffer_capacity: Maximum transitions to store.
+        replay_batch_size: Samples per training batch.
+        min_buffer_size: Minimum samples before using buffer.
+        use_local_targets: Use achieved next_states as targets instead of global goal.
+        local_target_percentile: Use transitions in this percentile of goal distance.
+
         gradient_clip_norm: Maximum gradient norm (None to disable).
     """
     state_dim: int = 4
@@ -53,12 +59,16 @@ class AgentConfig:
     prediction_update_steps: int = 5
     use_adaptive_lr: bool = True
     action_threshold: float = 0.5
-    # Replay buffer settings
+
+    # Two-buffer replay settings
     use_replay_buffer: bool = False
     replay_buffer_capacity: int = 10000
     replay_batch_size: int = 32
     min_buffer_size: int = 100
-    updates_per_step: int = 1
+    use_local_targets: bool = False  # Use achieved next_states as targets (experimental)
+    local_target_percentile: float = 25.0  # Sample from best % of transitions
+    use_buffer_states: bool = False  # Sample states from buffer (with global goal)
+
     # Gradient clipping
     gradient_clip_norm: Optional[float] = None
 
@@ -120,11 +130,19 @@ class GoalStateAgent:
         self._prev_state: Optional[np.ndarray] = None
         self._prev_action: Optional[np.ndarray] = None
 
-        # Initialize replay buffer if enabled
-        self.replay_buffer: Optional[ReplayBuffer] = None
+        # Initialize two-buffer system if enabled
+        self.transition_buffer: Optional[TransitionBuffer] = None
+        self.goal_buffer: Optional[GoalTransitionBuffer] = None
         if self.config.use_replay_buffer:
-            self.replay_buffer = ReplayBuffer(
+            # Buffer for prediction module: (state, action, next_state)
+            self.transition_buffer = TransitionBuffer(
                 capacity=self.config.replay_buffer_capacity
+            )
+            # Buffer for action policy: (state, next_state) with goal distance
+            self.goal_buffer = GoalTransitionBuffer(
+                capacity=self.config.replay_buffer_capacity,
+                goal_indices=self.config.goal_indices,
+                goal_values=self.config.goal_values,
             )
 
         # Metrics tracking
@@ -190,8 +208,8 @@ class GoalStateAgent:
         """Update the prediction module using the previous state transition.
 
         Trains the prediction module to predict the current state from
-        the previous (state, action) pair. If replay buffer is enabled,
-        samples random batches from the buffer for more stable training.
+        the previous (state, action) pair. Uses TransitionBuffer for
+        diverse training data when enabled.
 
         Args:
             current_state: The current observed state.
@@ -206,35 +224,31 @@ class GoalStateAgent:
         prev_state = np.atleast_2d(self._prev_state)
         prev_action = np.atleast_2d(self._prev_action)
 
-        # Add transition to replay buffer if enabled
-        if self.replay_buffer is not None:
-            self.replay_buffer.add(
+        # Add transition to buffers if enabled
+        if self.transition_buffer is not None:
+            self.transition_buffer.add(
                 self._prev_state.flatten(),
                 self._prev_action.flatten(),
+                current_state.flatten(),
+            )
+        if self.goal_buffer is not None:
+            self.goal_buffer.add(
+                self._prev_state.flatten(),
                 current_state.flatten(),
             )
 
         total_error = 0.0
 
-        # Determine if we should use replay buffer for training
-        use_buffer = (
-            self.replay_buffer is not None
-            and self.replay_buffer.is_ready(self.config.min_buffer_size)
-        )
+        # CRITICAL INSIGHT: The prediction module must stay tuned to CURRENT dynamics
+        # for the action policy gradients to be useful. Using buffer here breaks
+        # the coupling between prediction accuracy and action gradient quality.
+        # Always use online learning for the prediction module.
 
         for _ in range(self.config.prediction_update_steps):
-            if use_buffer:
-                # Sample batch from replay buffer
-                batch_states, batch_actions, batch_next_states = self.replay_buffer.sample(
-                    self.config.replay_batch_size
-                )
-                # Concatenate states and actions for batch input
-                pred_input = np.concatenate([batch_states, batch_actions], axis=1)
-                target_state = batch_next_states
-            else:
-                # Use current transition
-                pred_input = np.concatenate([prev_state, prev_action], axis=1)
-                target_state = current_state
+            # Always use current transition (online learning)
+            # This keeps the prediction module tuned to current state distribution
+            pred_input = np.concatenate([prev_state, prev_action], axis=1)
+            target_state = current_state
 
             # Forward pass
             predicted_state = self.prediction_module.forward(pred_input)
@@ -276,9 +290,12 @@ class GoalStateAgent:
 
         This is the key mechanism: gradients from the goal state error
         flow through the prediction module's weights to update the
-        action policy. Action policy updates are always on-policy (using
-        current state) because they rely on the current prediction module
-        weights for gradient flow.
+        action policy.
+
+        Two training modes:
+        1. Global goal (default): Train to reach the specified goal state
+        2. Local targets (with buffer): Train to reach achieved next_states
+           that were close to goal. These are "achievable" targets.
 
         Args:
             current_state: The current observed state.
@@ -288,16 +305,56 @@ class GoalStateAgent:
         """
         current_state = np.atleast_2d(current_state)
         goal_values = np.atleast_2d(self.config.goal_values)
+        goal_indices = self.config.goal_indices
 
         total_error = 0.0
 
-        # Action policy updates are ALWAYS on-policy (current state only)
-        # Using replay buffer for action policy doesn't work well because:
-        # 1. The gradient flow depends on current prediction module weights
-        # 2. Stale states from buffer may not represent current dynamics
-        training_states = current_state
+        # Check if we should use buffer for action policy training
+        use_local_targets = (
+            self.config.use_local_targets
+            and self.goal_buffer is not None
+            and self.goal_buffer.is_ready(self.config.min_buffer_size)
+        )
+        use_buffer_states = (
+            self.config.use_buffer_states
+            and self.goal_buffer is not None
+            and self.goal_buffer.is_ready(self.config.min_buffer_size)
+        )
 
         for _ in range(self.config.action_update_steps):
+            if use_local_targets:
+                # Sample good (state, next_state) pairs from buffer
+                # Train toward achieved next_states (experimental)
+                batch_states, batch_next_states, _ = self.goal_buffer.sample_good_transitions(
+                    batch_size=self.config.replay_batch_size,
+                    percentile=self.config.local_target_percentile,
+                )
+
+                if batch_states is None:
+                    training_states = current_state
+                    target_values = goal_values
+                else:
+                    training_states = batch_states
+                    target_values = batch_next_states[:, goal_indices]
+            elif use_buffer_states:
+                # Sample states from buffer, but use GLOBAL goal as target
+                # This provides state diversity without changing the objective
+                batch_states, _, _ = self.goal_buffer.sample_good_transitions(
+                    batch_size=self.config.replay_batch_size,
+                    percentile=50.0,  # More diverse sampling
+                )
+
+                if batch_states is None:
+                    training_states = current_state
+                else:
+                    training_states = batch_states
+                # Always use global goal
+                target_values = np.tile(goal_values, (training_states.shape[0], 1))
+            else:
+                # Use current state with global goal (original behavior)
+                training_states = current_state
+                target_values = goal_values
+
             # Get current action from policy
             action_raw = self.action_policy.forward(training_states)
 
@@ -308,12 +365,11 @@ class GoalStateAgent:
             predicted_next_state = self.prediction_module.forward(pred_input)
 
             # Extract goal-relevant dimensions
-            goal_indices = self.config.goal_indices
             predicted_goal_dims = predicted_next_state[:, goal_indices]
 
-            # Compute loss and gradient against goal state
-            error = self.loss_fn.compute(predicted_goal_dims, goal_values)
-            goal_gradient = self.loss_fn.gradient(predicted_goal_dims, goal_values)
+            # Compute loss and gradient against target (local or global)
+            error = self.loss_fn.compute(predicted_goal_dims, target_values)
+            goal_gradient = self.loss_fn.gradient(predicted_goal_dims, target_values)
 
             # Apply gradient clipping
             goal_gradient = self._clip_gradient(goal_gradient)

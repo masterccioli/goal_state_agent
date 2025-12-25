@@ -105,12 +105,14 @@ class Trainer:
             prediction_update_steps=self.config.prediction_update_steps,
             use_adaptive_lr=self.config.use_adaptive_lr,
             action_threshold=self.config.action_threshold,
-            # Replay buffer settings
+            # Two-buffer replay settings
             use_replay_buffer=self.config.use_replay_buffer,
             replay_buffer_capacity=self.config.replay_buffer_capacity,
             replay_batch_size=self.config.replay_batch_size,
             min_buffer_size=self.config.min_buffer_size,
-            updates_per_step=self.config.updates_per_step,
+            use_local_targets=self.config.use_local_targets,
+            local_target_percentile=self.config.local_target_percentile,
+            use_buffer_states=self.config.use_buffer_states,
             # Gradient clipping
             gradient_clip_norm=self.config.gradient_clip_norm,
         )

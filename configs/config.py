@@ -103,12 +103,14 @@ class TrainingConfig:
     convergence_window: int = 5
     convergence_threshold: int = 2500  # 5 * 500 = 2500 for CartPole-v1
 
-    # Replay buffer settings
+    # Two-buffer replay settings
     use_replay_buffer: bool = False
     replay_buffer_capacity: int = 10000
     replay_batch_size: int = 32
     min_buffer_size: int = 100
-    updates_per_step: int = 1
+    use_local_targets: bool = False  # Use achieved next_states as targets (experimental)
+    local_target_percentile: float = 25.0  # Sample from best % of transitions
+    use_buffer_states: bool = False  # Sample states from buffer (with global goal)
 
     # Gradient clipping
     gradient_clip_norm: Optional[float] = None
@@ -196,19 +198,21 @@ CARTPOLE_ADAM = TrainingConfig(
 )
 
 CARTPOLE_REPLAY = TrainingConfig(
-    # Note: Replay buffer doesn't work well with this architecture because
-    # action policy gradients flow through prediction module weights and
-    # need on-policy updates. Keeping for API compatibility but disabled.
-    use_replay_buffer=False,
+    # Two-buffer replay with local targets:
+    # - TransitionBuffer for prediction module (world model)
+    # - GoalTransitionBuffer for action policy (uses achieved next_states as targets)
+    use_replay_buffer=True,
     replay_buffer_capacity=10000,
     replay_batch_size=32,
     min_buffer_size=100,
+    use_local_targets=True,  # Key feature: use achieved states as targets
+    local_target_percentile=25.0,  # Sample from best 25% of transitions
     action_learning_rate=0.5,
     prediction_learning_rate=0.5,
     action_update_steps=5,
     prediction_update_steps=5,
     use_adaptive_lr=True,
-    gradient_clip_norm=1.0,  # Primary stability mechanism
+    gradient_clip_norm=1.0,
 )
 
 # Recommended configuration for CartPole-v1 (with gradient clipping for stability)
@@ -220,4 +224,20 @@ CARTPOLE_CLIPPED = TrainingConfig(
     prediction_learning_rate=0.5,
     action_update_steps=5,
     prediction_update_steps=5,
+)
+
+# Two-buffer with local targets (experimental)
+CARTPOLE_LOCAL_TARGETS = TrainingConfig(
+    use_replay_buffer=True,
+    use_local_targets=True,
+    local_target_percentile=25.0,
+    replay_buffer_capacity=5000,
+    replay_batch_size=16,
+    min_buffer_size=50,
+    action_learning_rate=0.5,
+    prediction_learning_rate=0.5,
+    action_update_steps=3,
+    prediction_update_steps=3,
+    use_adaptive_lr=True,
+    gradient_clip_norm=1.0,
 )
