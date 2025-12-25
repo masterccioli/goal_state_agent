@@ -201,6 +201,54 @@ To extend to multiple goal states, modify `AgentConfig` to include goal as input
 action_input_dim = state_dim + goal_dim
 ```
 
+## Visualization
+
+### Training Plots
+
+Generate plots of training metrics:
+
+```python
+from goal_state_agent import Trainer, TrainingConfig
+from goal_state_agent.visualization import plot_training_metrics
+
+trainer = Trainer(TrainingConfig(max_episodes=100))
+metrics = trainer.train()
+
+plot_training_metrics(
+    episode_lengths=metrics.episode_lengths,
+    goal_errors=metrics.goal_errors,
+    prediction_errors=metrics.prediction_errors,
+    save_dir="figures",
+)
+```
+
+### Learning Progression Videos
+
+Record videos at different stages of training to visualize learning:
+
+```python
+from goal_state_agent.visualization import record_learning_progression
+
+results = record_learning_progression(
+    max_episodes=100,
+    record_episodes=[0, 10, 25, 50, 99],  # Episodes to record
+    video_folder="videos/learning",
+)
+```
+
+Or use the CLI:
+
+```bash
+# Generate plots only
+python -m goal_state_agent.examples.visualize_training --output-dir results
+
+# Record videos of learning progression
+python -m goal_state_agent.examples.visualize_training --record-video --output-dir results
+
+# Create a montage of all recorded episodes (requires moviepy)
+python -m goal_state_agent.examples.visualize_training --record-video --create-montage
+```
+
 ## Project Structure
 
 ```
@@ -216,8 +264,12 @@ goal_state_agent/
 │   └── config.py            # Configuration dataclasses
 ├── utils/
 │   └── optimizers.py        # SGD, Adam optimizers
+├── visualization/
+│   ├── plots.py             # Training metric plots
+│   └── video.py             # Video recording utilities
 ├── examples/
-│   └── train_cartpole.py    # Example training script
+│   ├── train_cartpole.py    # Basic training script
+│   └── visualize_training.py # Training with visualization
 ├── requirements.txt
 └── pyproject.toml
 ```

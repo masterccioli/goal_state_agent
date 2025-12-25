@@ -32,12 +32,21 @@ dev = [
     "black>=23.0.0",
     "mypy>=1.0.0",
 ]
-plot = [
+viz = [
     "matplotlib>=3.5.0",
+]
+video = [
+    "matplotlib>=3.5.0",
+    "moviepy>=1.0.0",
+]
+all = [
+    "matplotlib>=3.5.0",
+    "moviepy>=1.0.0",
 ]
 
 [project.scripts]
 train-cartpole = "goal_state_agent.examples.train_cartpole:main"
+visualize-training = "goal_state_agent.examples.visualize_training:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

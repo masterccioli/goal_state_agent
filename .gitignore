@@ -117,3 +117,5 @@ checkpoints/
 *.json
 !pyproject.toml
 figures/
+output/
+videos/

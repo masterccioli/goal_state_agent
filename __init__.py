@@ -51,6 +51,19 @@ from .core.layers import LinearLayer, TanhActivation, Network
 from .core.losses import MSELoss, LogLoss, CrossEntropyLoss
 from .utils.optimizers import SGD, Adam, AdaptiveLR
 
+# Visualization imports (optional dependency)
+try:
+    from .visualization import (
+        plot_training_metrics,
+        plot_episode_lengths,
+        plot_errors,
+        record_episode,
+        record_learning_progression,
+    )
+    _HAS_VISUALIZATION = True
+except ImportError:
+    _HAS_VISUALIZATION = False
+
 __all__ = [
     # Main classes
     "GoalStateAgent",
@@ -78,4 +91,10 @@ __all__ = [
     "SGD",
     "Adam",
     "AdaptiveLR",
+    # Visualization (optional)
+    "plot_training_metrics",
+    "plot_episode_lengths",
+    "plot_errors",
+    "record_episode",
+    "record_learning_progression",
 ]
