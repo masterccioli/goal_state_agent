@@ -45,11 +45,14 @@ from .configs.config import (
     CARTPOLE_FAST,
     CARTPOLE_STABLE,
     CARTPOLE_ADAM,
+    CARTPOLE_REPLAY,
+    CARTPOLE_CLIPPED,
 )
 from .training import Trainer, TrainingMetrics, train_agent
 from .core.layers import LinearLayer, TanhActivation, Network
 from .core.losses import MSELoss, LogLoss, CrossEntropyLoss
 from .utils.optimizers import SGD, Adam, AdaptiveLR
+from .utils.replay_buffer import ReplayBuffer, PrioritizedReplayBuffer
 
 # Visualization imports (optional dependency)
 try:
@@ -78,6 +81,8 @@ __all__ = [
     "CARTPOLE_FAST",
     "CARTPOLE_STABLE",
     "CARTPOLE_ADAM",
+    "CARTPOLE_REPLAY",
+    "CARTPOLE_CLIPPED",
     # Convenience functions
     "train_agent",
     # Core components
@@ -87,6 +92,9 @@ __all__ = [
     "MSELoss",
     "LogLoss",
     "CrossEntropyLoss",
+    # Replay buffer
+    "ReplayBuffer",
+    "PrioritizedReplayBuffer",
     # Optimizers
     "SGD",
     "Adam",

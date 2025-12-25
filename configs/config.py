@@ -50,6 +50,16 @@ class TrainingConfig:
         convergence_window: Number of episodes to check for convergence.
         convergence_threshold: Required cumulative steps for convergence.
 
+        # Replay buffer settings
+        use_replay_buffer: Whether to use experience replay.
+        replay_buffer_capacity: Maximum buffer size.
+        replay_batch_size: Batch size for sampling.
+        min_buffer_size: Minimum samples before training from buffer.
+        updates_per_step: Gradient updates per environment step.
+
+        # Gradient clipping
+        gradient_clip_norm: Maximum gradient norm (None to disable).
+
         # Logging
         log_interval: Episodes between progress logs.
         save_interval: Episodes between checkpoint saves.
@@ -92,6 +102,16 @@ class TrainingConfig:
     # Convergence settings
     convergence_window: int = 5
     convergence_threshold: int = 2500  # 5 * 500 = 2500 for CartPole-v1
+
+    # Replay buffer settings
+    use_replay_buffer: bool = False
+    replay_buffer_capacity: int = 10000
+    replay_batch_size: int = 32
+    min_buffer_size: int = 100
+    updates_per_step: int = 1
+
+    # Gradient clipping
+    gradient_clip_norm: Optional[float] = None
 
     # Logging
     log_interval: int = 10
@@ -173,4 +193,31 @@ CARTPOLE_ADAM = TrainingConfig(
     action_update_steps=5,
     prediction_update_steps=5,
     use_adaptive_lr=False,
+)
+
+CARTPOLE_REPLAY = TrainingConfig(
+    # Note: Replay buffer doesn't work well with this architecture because
+    # action policy gradients flow through prediction module weights and
+    # need on-policy updates. Keeping for API compatibility but disabled.
+    use_replay_buffer=False,
+    replay_buffer_capacity=10000,
+    replay_batch_size=32,
+    min_buffer_size=100,
+    action_learning_rate=0.5,
+    prediction_learning_rate=0.5,
+    action_update_steps=5,
+    prediction_update_steps=5,
+    use_adaptive_lr=True,
+    gradient_clip_norm=1.0,  # Primary stability mechanism
+)
+
+# Recommended configuration for CartPole-v1 (with gradient clipping for stability)
+CARTPOLE_CLIPPED = TrainingConfig(
+    use_replay_buffer=False,
+    use_adaptive_lr=True,
+    gradient_clip_norm=1.0,
+    action_learning_rate=0.5,
+    prediction_learning_rate=0.5,
+    action_update_steps=5,
+    prediction_update_steps=5,
 )

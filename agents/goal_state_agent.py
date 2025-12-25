@@ -17,6 +17,7 @@ import numpy as np
 from ..core.layers import LinearLayer
 from ..core.losses import MSELoss, Loss
 from ..utils.optimizers import Optimizer, Adam, AdaptiveLR
+from ..utils.replay_buffer import ReplayBuffer
 
 
 @dataclass
@@ -35,6 +36,12 @@ class AgentConfig:
         prediction_update_steps: Number of gradient steps per prediction update.
         use_adaptive_lr: Whether to scale learning rate by gradient magnitude.
         action_threshold: Threshold for converting continuous action to discrete.
+        use_replay_buffer: Whether to use experience replay for training.
+        replay_buffer_capacity: Maximum number of transitions to store.
+        replay_batch_size: Number of samples per training batch.
+        min_buffer_size: Minimum buffer size before training from buffer.
+        updates_per_step: Number of gradient updates per environment step.
+        gradient_clip_norm: Maximum gradient norm (None to disable).
     """
     state_dim: int = 4
     action_dim: int = 1
@@ -46,6 +53,14 @@ class AgentConfig:
     prediction_update_steps: int = 5
     use_adaptive_lr: bool = True
     action_threshold: float = 0.5
+    # Replay buffer settings
+    use_replay_buffer: bool = False
+    replay_buffer_capacity: int = 10000
+    replay_batch_size: int = 32
+    min_buffer_size: int = 100
+    updates_per_step: int = 1
+    # Gradient clipping
+    gradient_clip_norm: Optional[float] = None
 
 
 class GoalStateAgent:
@@ -105,6 +120,13 @@ class GoalStateAgent:
         self._prev_state: Optional[np.ndarray] = None
         self._prev_action: Optional[np.ndarray] = None
 
+        # Initialize replay buffer if enabled
+        self.replay_buffer: Optional[ReplayBuffer] = None
+        if self.config.use_replay_buffer:
+            self.replay_buffer = ReplayBuffer(
+                capacity=self.config.replay_buffer_capacity
+            )
+
         # Metrics tracking
         self.metrics = {
             "goal_errors": [],
@@ -144,6 +166,23 @@ class GoalStateAgent:
         state = np.atleast_2d(state)
         return self.action_policy.forward(state)
 
+    def _clip_gradient(self, gradient: np.ndarray) -> np.ndarray:
+        """Clip gradient by norm if clipping is enabled.
+
+        Args:
+            gradient: Gradient array to clip.
+
+        Returns:
+            Clipped gradient (or original if clipping disabled).
+        """
+        if self.config.gradient_clip_norm is None:
+            return gradient
+
+        grad_norm = np.linalg.norm(gradient)
+        if grad_norm > self.config.gradient_clip_norm:
+            return gradient * (self.config.gradient_clip_norm / grad_norm)
+        return gradient
+
     def update_prediction_module(
         self,
         current_state: np.ndarray,
@@ -151,7 +190,8 @@ class GoalStateAgent:
         """Update the prediction module using the previous state transition.
 
         Trains the prediction module to predict the current state from
-        the previous (state, action) pair.
+        the previous (state, action) pair. If replay buffer is enabled,
+        samples random batches from the buffer for more stable training.
 
         Args:
             current_state: The current observed state.
@@ -166,18 +206,45 @@ class GoalStateAgent:
         prev_state = np.atleast_2d(self._prev_state)
         prev_action = np.atleast_2d(self._prev_action)
 
+        # Add transition to replay buffer if enabled
+        if self.replay_buffer is not None:
+            self.replay_buffer.add(
+                self._prev_state.flatten(),
+                self._prev_action.flatten(),
+                current_state.flatten(),
+            )
+
         total_error = 0.0
 
+        # Determine if we should use replay buffer for training
+        use_buffer = (
+            self.replay_buffer is not None
+            and self.replay_buffer.is_ready(self.config.min_buffer_size)
+        )
+
         for _ in range(self.config.prediction_update_steps):
-            # Concatenate previous state and action
-            pred_input = np.concatenate([prev_state, prev_action], axis=1)
+            if use_buffer:
+                # Sample batch from replay buffer
+                batch_states, batch_actions, batch_next_states = self.replay_buffer.sample(
+                    self.config.replay_batch_size
+                )
+                # Concatenate states and actions for batch input
+                pred_input = np.concatenate([batch_states, batch_actions], axis=1)
+                target_state = batch_next_states
+            else:
+                # Use current transition
+                pred_input = np.concatenate([prev_state, prev_action], axis=1)
+                target_state = current_state
 
             # Forward pass
             predicted_state = self.prediction_module.forward(pred_input)
 
             # Compute loss and gradient
-            error = self.loss_fn.compute(predicted_state, current_state)
-            gradient = self.loss_fn.gradient(predicted_state, current_state)
+            error = self.loss_fn.compute(predicted_state, target_state)
+            gradient = self.loss_fn.gradient(predicted_state, target_state)
+
+            # Apply gradient clipping
+            gradient = self._clip_gradient(gradient)
 
             # Compute and apply gradients
             self.prediction_module.compute_parameter_gradients(pred_input)
@@ -209,7 +276,9 @@ class GoalStateAgent:
 
         This is the key mechanism: gradients from the goal state error
         flow through the prediction module's weights to update the
-        action policy.
+        action policy. Action policy updates are always on-policy (using
+        current state) because they rely on the current prediction module
+        weights for gradient flow.
 
         Args:
             current_state: The current observed state.
@@ -222,12 +291,18 @@ class GoalStateAgent:
 
         total_error = 0.0
 
+        # Action policy updates are ALWAYS on-policy (current state only)
+        # Using replay buffer for action policy doesn't work well because:
+        # 1. The gradient flow depends on current prediction module weights
+        # 2. Stale states from buffer may not represent current dynamics
+        training_states = current_state
+
         for _ in range(self.config.action_update_steps):
             # Get current action from policy
-            action_raw = self.action_policy.forward(current_state)
+            action_raw = self.action_policy.forward(training_states)
 
             # Concatenate state and action for prediction
-            pred_input = np.concatenate([current_state, action_raw], axis=1)
+            pred_input = np.concatenate([training_states, action_raw], axis=1)
 
             # Predict next state
             predicted_next_state = self.prediction_module.forward(pred_input)
@@ -240,8 +315,11 @@ class GoalStateAgent:
             error = self.loss_fn.compute(predicted_goal_dims, goal_values)
             goal_gradient = self.loss_fn.gradient(predicted_goal_dims, goal_values)
 
+            # Apply gradient clipping
+            goal_gradient = self._clip_gradient(goal_gradient)
+
             # Compute parameter gradients for action policy
-            self.action_policy.compute_parameter_gradients(current_state)
+            self.action_policy.compute_parameter_gradients(training_states)
 
             # Get prediction module's pass-through gradient
             # This is the weight matrix showing how action affects predicted state
