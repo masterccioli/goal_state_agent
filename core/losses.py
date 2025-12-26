@@ -54,22 +54,28 @@ class MSELoss(Loss):
 
     L = 0.5 * mean((y_pred - y_true)^2)
     dL/dy_pred = (y_pred - y_true) / batch_size
+
+    Uses numerical stability measures to prevent overflow with large differences.
     """
 
-    def __init__(self, reduction: str = "mean"):
+    def __init__(self, reduction: str = "mean", max_diff: float = 1e6):
         """Initialize MSE loss.
 
         Args:
             reduction: How to reduce the loss. Options: 'mean', 'sum', 'none'.
+            max_diff: Maximum difference value (clips to prevent overflow).
         """
         self.reduction = reduction
+        self.max_diff = max_diff
 
     def compute(self, y_pred: np.ndarray, y_true: np.ndarray) -> float:
-        """Compute MSE loss."""
+        """Compute MSE loss with overflow protection."""
         y_pred = np.atleast_2d(y_pred)
         y_true = np.atleast_2d(y_true)
 
         diff = y_pred - y_true
+        # Clip difference to prevent overflow in squaring
+        diff = np.clip(diff, -self.max_diff, self.max_diff)
         squared = 0.5 * np.power(diff, 2)
 
         if self.reduction == "mean":
@@ -80,11 +86,13 @@ class MSELoss(Loss):
             return squared
 
     def gradient(self, y_pred: np.ndarray, y_true: np.ndarray) -> np.ndarray:
-        """Compute gradient of MSE loss."""
+        """Compute gradient of MSE loss with overflow protection."""
         y_pred = np.atleast_2d(y_pred)
         y_true = np.atleast_2d(y_true)
 
         diff = y_pred - y_true
+        # Clip difference to prevent exploding gradients
+        diff = np.clip(diff, -self.max_diff, self.max_diff)
 
         if self.reduction == "mean":
             return diff / diff.shape[0]

@@ -192,19 +192,27 @@ def plot_training_metrics(
 
     # Goal state error (bottom left)
     ax2 = fig.add_subplot(gs[1, 0])
-    ax2.plot(goal_errors, linewidth=1.5, color="#2E86AB")
+    # Filter out inf/nan values for plotting
+    goal_errors_clean = [e for e in goal_errors if np.isfinite(e)]
+    if goal_errors_clean:
+        ax2.plot(goal_errors_clean, linewidth=1.5, color="#2E86AB")
+        if len(goal_errors_clean) > 1 and min(goal_errors_clean) > 0:
+            if max(goal_errors_clean) / min(goal_errors_clean) > 100:
+                ax2.set_yscale('log')
     ax2.set_xlabel("Episode")
     ax2.set_ylabel("MSE")
     ax2.set_title("Goal State Error")
     ax2.grid(True, alpha=0.3)
-    ax2.set_yscale('log') if max(goal_errors) / (min(goal_errors) + 1e-10) > 100 else None
 
     # Prediction error (bottom right)
     ax3 = fig.add_subplot(gs[1, 1])
-    pred_errors_filtered = [e for e in prediction_errors if e > 0]
+    # Filter out zeros, inf, and nan values
+    pred_errors_filtered = [e for e in prediction_errors if e > 0 and np.isfinite(e)]
     if pred_errors_filtered:
         ax3.plot(pred_errors_filtered, linewidth=1.5, color="#E94F37")
-        ax3.set_yscale('log') if max(pred_errors_filtered) / (min(pred_errors_filtered) + 1e-10) > 100 else None
+        if len(pred_errors_filtered) > 1 and min(pred_errors_filtered) > 0:
+            if max(pred_errors_filtered) / min(pred_errors_filtered) > 100:
+                ax3.set_yscale('log')
     ax3.set_xlabel("Episode")
     ax3.set_ylabel("MSE")
     ax3.set_title("Prediction Module Error")
