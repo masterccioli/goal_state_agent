@@ -16,7 +16,10 @@ import numpy as np
 
 from ..core.layers import LinearLayer
 from ..core.losses import MSELoss, Loss
-from ..utils.optimizers import Optimizer, Adam, AdaptiveLR
+from ..utils.optimizers import (
+    Optimizer, Adam, AdaptiveLR, LRScheduler,
+    SurpriseBasedLR, InverseSurpriseLR,
+)
 from ..utils.replay_buffer import TransitionBuffer, GoalTransitionBuffer
 
 
@@ -71,6 +74,14 @@ class AgentConfig:
 
     # Gradient clipping
     gradient_clip_norm: Optional[float] = None
+
+    # Learning rate scheduling
+    lr_scheduler_type: Optional[str] = None  # 'decay', 'goldilocks', 'surprise'
+    lr_decay_rate: float = 0.999  # For decay scheduler
+    lr_decay_steps: int = 100  # For decay scheduler
+    lr_target_surprise: float = 0.1  # For goldilocks scheduler
+    lr_surprise_width: float = 0.1  # For goldilocks scheduler
+    lr_surprise_scale: float = 1.0  # For surprise scheduler
 
 
 class GoalStateAgent:
@@ -145,11 +156,32 @@ class GoalStateAgent:
                 goal_values=self.config.goal_values,
             )
 
+        # Learning rate scheduler
+        self.lr_scheduler: Optional[LRScheduler] = None
+        self._training_step = 0
+        self._last_prediction_error = 0.0
+        if self.config.lr_scheduler_type == "decay":
+            from ..utils.optimizers import ExponentialDecay
+            self.lr_scheduler = ExponentialDecay(
+                decay_rate=self.config.lr_decay_rate,
+                decay_steps=self.config.lr_decay_steps,
+            )
+        elif self.config.lr_scheduler_type == "goldilocks":
+            self.lr_scheduler = SurpriseBasedLR(
+                target_surprise=self.config.lr_target_surprise,
+                width=self.config.lr_surprise_width,
+            )
+        elif self.config.lr_scheduler_type == "surprise":
+            self.lr_scheduler = InverseSurpriseLR(
+                scale=self.config.lr_surprise_scale,
+            )
+
         # Metrics tracking
         self.metrics = {
             "goal_errors": [],
             "prediction_errors": [],
             "actions": [],
+            "learning_rates": [],
         }
 
     def get_action(self, state: np.ndarray, training: bool = True) -> int:
@@ -200,6 +232,24 @@ class GoalStateAgent:
         if grad_norm > self.config.gradient_clip_norm:
             return gradient * (self.config.gradient_clip_norm / grad_norm)
         return gradient
+
+    def _get_scheduled_lr(self, base_lr: float) -> float:
+        """Get learning rate adjusted by scheduler.
+
+        Args:
+            base_lr: Base learning rate.
+
+        Returns:
+            Adjusted learning rate.
+        """
+        if self.lr_scheduler is None:
+            return base_lr
+
+        # Update surprise for surprise-based schedulers
+        if hasattr(self.lr_scheduler, 'set_surprise'):
+            self.lr_scheduler.set_surprise(self._last_prediction_error)
+
+        return self.lr_scheduler.get_lr(base_lr, self._training_step)
 
     def update_prediction_module(
         self,
@@ -272,13 +322,17 @@ class GoalStateAgent:
                 )
                 self.prediction_module.set_weights(new_W)
             else:
-                # Use built-in gradient descent with adaptive LR
-                lr = self.config.prediction_learning_rate
+                # Use built-in gradient descent with adaptive LR and scheduling
+                lr = self._get_scheduled_lr(self.config.prediction_learning_rate)
                 if self.config.use_adaptive_lr:
                     lr *= self.adaptive_lr.get_lr(gradient)
                 self.prediction_module.apply_gradients([], gradient, learning_rate=lr)
 
             total_error = error
+
+        # Store prediction error for surprise-based schedulers
+        self._last_prediction_error = total_error
+        self._training_step += 1
 
         return total_error
 
@@ -403,7 +457,8 @@ class GoalStateAgent:
                 )
                 self.action_policy.set_weights(new_W)
             else:
-                lr = self.config.action_learning_rate
+                # Use built-in gradient descent with adaptive LR and scheduling
+                lr = self._get_scheduled_lr(self.config.action_learning_rate)
                 if self.config.use_adaptive_lr:
                     lr *= self.adaptive_lr.get_lr(goal_gradient)
                 self.action_policy.apply_gradients(
@@ -411,6 +466,8 @@ class GoalStateAgent:
                     goal_gradient,
                     learning_rate=lr,
                 )
+                # Track learning rate for metrics
+                self.metrics["learning_rates"].append(lr)
 
             total_error = error
 
@@ -462,6 +519,7 @@ class GoalStateAgent:
             "goal_errors": [],
             "prediction_errors": [],
             "actions": [],
+            "learning_rates": [],
         }
 
     def get_weights(self) -> Tuple[np.ndarray, np.ndarray]:

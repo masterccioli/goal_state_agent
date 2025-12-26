@@ -48,11 +48,18 @@ from .configs.config import (
     CARTPOLE_REPLAY,
     CARTPOLE_CLIPPED,
     CARTPOLE_LOCAL_TARGETS,
+    CARTPOLE_LR_DECAY,
+    CARTPOLE_GOLDILOCKS,
+    CARTPOLE_SURPRISE,
 )
 from .training import Trainer, TrainingMetrics, train_agent
 from .core.layers import LinearLayer, TanhActivation, Network
 from .core.losses import MSELoss, LogLoss, CrossEntropyLoss
-from .utils.optimizers import SGD, Adam, AdaptiveLR
+from .utils.optimizers import (
+    SGD, Adam, AdaptiveLR,
+    LRScheduler, ExponentialDecay, StepDecay, LinearDecay,
+    SurpriseBasedLR, InverseSurpriseLR,
+)
 from .utils.replay_buffer import ReplayBuffer, PrioritizedReplayBuffer
 
 # Visualization imports (optional dependency)
@@ -85,6 +92,9 @@ __all__ = [
     "CARTPOLE_REPLAY",
     "CARTPOLE_CLIPPED",
     "CARTPOLE_LOCAL_TARGETS",
+    "CARTPOLE_LR_DECAY",
+    "CARTPOLE_GOLDILOCKS",
+    "CARTPOLE_SURPRISE",
     # Convenience functions
     "train_agent",
     # Core components
@@ -101,6 +111,13 @@ __all__ = [
     "SGD",
     "Adam",
     "AdaptiveLR",
+    # Learning rate schedulers
+    "LRScheduler",
+    "ExponentialDecay",
+    "StepDecay",
+    "LinearDecay",
+    "SurpriseBasedLR",
+    "InverseSurpriseLR",
     # Visualization (optional)
     "plot_training_metrics",
     "plot_episode_lengths",

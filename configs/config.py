@@ -115,6 +115,14 @@ class TrainingConfig:
     # Gradient clipping
     gradient_clip_norm: Optional[float] = None
 
+    # Learning rate scheduling
+    lr_scheduler_type: Optional[str] = None  # 'decay', 'goldilocks', 'surprise'
+    lr_decay_rate: float = 0.999  # For decay scheduler
+    lr_decay_steps: int = 100  # For decay scheduler
+    lr_target_surprise: float = 0.1  # For goldilocks scheduler
+    lr_surprise_width: float = 0.1  # For goldilocks scheduler
+    lr_surprise_scale: float = 1.0  # For surprise scheduler
+
     # Logging
     log_interval: int = 10
     save_interval: int = 100
@@ -238,6 +246,44 @@ CARTPOLE_LOCAL_TARGETS = TrainingConfig(
     prediction_learning_rate=0.5,
     action_update_steps=3,
     prediction_update_steps=3,
+    use_adaptive_lr=True,
+    gradient_clip_norm=1.0,
+)
+
+# Learning rate decay over time
+CARTPOLE_LR_DECAY = TrainingConfig(
+    lr_scheduler_type="decay",
+    lr_decay_rate=0.9995,  # Slow decay for long episodes
+    lr_decay_steps=100,
+    action_learning_rate=0.5,
+    prediction_learning_rate=0.5,
+    action_update_steps=5,
+    prediction_update_steps=5,
+    use_adaptive_lr=True,
+    gradient_clip_norm=1.0,
+)
+
+# Goldilocks effect: moderate surprise yields most learning
+CARTPOLE_GOLDILOCKS = TrainingConfig(
+    lr_scheduler_type="goldilocks",
+    lr_target_surprise=0.05,  # Optimal prediction error for learning
+    lr_surprise_width=0.05,   # Sensitivity to deviation from optimal
+    action_learning_rate=0.5,
+    prediction_learning_rate=0.5,
+    action_update_steps=5,
+    prediction_update_steps=5,
+    use_adaptive_lr=True,
+    gradient_clip_norm=1.0,
+)
+
+# High surprise = high learning rate
+CARTPOLE_SURPRISE = TrainingConfig(
+    lr_scheduler_type="surprise",
+    lr_surprise_scale=1.5,  # How much to increase LR when surprised
+    action_learning_rate=0.5,
+    prediction_learning_rate=0.5,
+    action_update_steps=5,
+    prediction_update_steps=5,
     use_adaptive_lr=True,
     gradient_clip_norm=1.0,
 )

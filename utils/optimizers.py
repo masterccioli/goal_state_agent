@@ -1,8 +1,208 @@
 """Optimizer implementations for goal state agent training."""
 
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, Callable
 import numpy as np
+
+
+# =============================================================================
+# Learning Rate Schedulers
+# =============================================================================
+
+
+class LRScheduler(ABC):
+    """Abstract base class for learning rate schedulers."""
+
+    @abstractmethod
+    def get_lr(self, base_lr: float, step: int) -> float:
+        """Compute learning rate for current step.
+
+        Args:
+            base_lr: Base learning rate.
+            step: Current training step.
+
+        Returns:
+            Adjusted learning rate.
+        """
+        pass
+
+    def step(self) -> None:
+        """Called after each training step (optional hook)."""
+        pass
+
+    def reset(self) -> None:
+        """Reset scheduler state."""
+        pass
+
+
+class ExponentialDecay(LRScheduler):
+    """Exponential learning rate decay.
+
+    lr = base_lr * decay_rate^(step / decay_steps)
+    """
+
+    def __init__(self, decay_rate: float = 0.99, decay_steps: int = 100):
+        """Initialize exponential decay scheduler.
+
+        Args:
+            decay_rate: Factor to multiply learning rate by.
+            decay_steps: Steps between decay applications.
+        """
+        self.decay_rate = decay_rate
+        self.decay_steps = decay_steps
+
+    def get_lr(self, base_lr: float, step: int) -> float:
+        return base_lr * (self.decay_rate ** (step / self.decay_steps))
+
+
+class StepDecay(LRScheduler):
+    """Step-based learning rate decay.
+
+    lr drops by decay_factor every step_size steps.
+    """
+
+    def __init__(self, step_size: int = 500, decay_factor: float = 0.5):
+        """Initialize step decay scheduler.
+
+        Args:
+            step_size: Steps between learning rate drops.
+            decay_factor: Factor to multiply learning rate by at each drop.
+        """
+        self.step_size = step_size
+        self.decay_factor = decay_factor
+
+    def get_lr(self, base_lr: float, step: int) -> float:
+        num_decays = step // self.step_size
+        return base_lr * (self.decay_factor ** num_decays)
+
+
+class LinearDecay(LRScheduler):
+    """Linear learning rate decay.
+
+    lr decreases linearly from base_lr to min_lr over total_steps.
+    """
+
+    def __init__(self, total_steps: int = 10000, min_lr: float = 0.01):
+        """Initialize linear decay scheduler.
+
+        Args:
+            total_steps: Steps over which to decay.
+            min_lr: Minimum learning rate (final value).
+        """
+        self.total_steps = total_steps
+        self.min_lr = min_lr
+
+    def get_lr(self, base_lr: float, step: int) -> float:
+        if step >= self.total_steps:
+            return self.min_lr
+        progress = step / self.total_steps
+        return base_lr + (self.min_lr - base_lr) * progress
+
+
+class SurpriseBasedLR(LRScheduler):
+    """Goldilocks effect: moderate surprise yields highest learning rate.
+
+    Based on developmental psychology research where moderate novelty
+    (not too boring, not too surprising) produces optimal learning.
+
+    Uses a bell curve centered on target_surprise:
+    - Low surprise (accurate predictions) → lower learning rate
+    - Moderate surprise (some error) → higher learning rate
+    - High surprise (large errors) → lower learning rate
+
+    lr = base_lr * exp(-((surprise - target) / width)^2)
+    """
+
+    def __init__(
+        self,
+        target_surprise: float = 0.1,
+        width: float = 0.1,
+        min_multiplier: float = 0.1,
+    ):
+        """Initialize Goldilocks learning rate.
+
+        Args:
+            target_surprise: The optimal prediction error (MSE) for learning.
+            width: Width of the bell curve (controls sensitivity).
+            min_multiplier: Minimum learning rate multiplier (prevents zero LR).
+        """
+        self.target_surprise = target_surprise
+        self.width = width
+        self.min_multiplier = min_multiplier
+        self._current_surprise = 0.0
+
+    def set_surprise(self, prediction_error: float) -> None:
+        """Update the current surprise level.
+
+        Args:
+            prediction_error: Current prediction module error (MSE).
+        """
+        self._current_surprise = prediction_error
+
+    def get_lr(self, base_lr: float, step: int) -> float:
+        # Bell curve centered on target_surprise
+        deviation = (self._current_surprise - self.target_surprise) / self.width
+        multiplier = np.exp(-(deviation ** 2))
+        # Ensure minimum learning rate
+        multiplier = max(multiplier, self.min_multiplier)
+        return base_lr * multiplier
+
+    def reset(self) -> None:
+        self._current_surprise = 0.0
+
+
+class InverseSurpriseLR(LRScheduler):
+    """High surprise → high learning rate.
+
+    The opposite of Goldilocks: surprising outcomes (large prediction errors)
+    yield greater learning, since these are the situations where the model
+    needs to update most.
+
+    Uses exponential scaling with saturation:
+    lr = base_lr * (1 + scale * tanh(surprise / saturation))
+
+    This gives higher LR when surprised, but saturates to prevent instability.
+    """
+
+    def __init__(
+        self,
+        scale: float = 1.0,
+        saturation: float = 0.5,
+        baseline: float = 0.5,
+    ):
+        """Initialize inverse surprise learning rate.
+
+        Args:
+            scale: Maximum additional learning rate multiplier.
+            saturation: Surprise level at which effect begins to saturate.
+            baseline: Minimum learning rate multiplier (at zero surprise).
+        """
+        self.scale = scale
+        self.saturation = saturation
+        self.baseline = baseline
+        self._current_surprise = 0.0
+
+    def set_surprise(self, prediction_error: float) -> None:
+        """Update the current surprise level.
+
+        Args:
+            prediction_error: Current prediction module error (MSE).
+        """
+        self._current_surprise = prediction_error
+
+    def get_lr(self, base_lr: float, step: int) -> float:
+        # Higher surprise → higher multiplier, with saturation
+        surprise_factor = np.tanh(self._current_surprise / self.saturation)
+        multiplier = self.baseline + self.scale * surprise_factor
+        return base_lr * multiplier
+
+    def reset(self) -> None:
+        self._current_surprise = 0.0
+
+
+# =============================================================================
+# Optimizers
+# =============================================================================
 
 
 class Optimizer(ABC):

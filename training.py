@@ -115,6 +115,13 @@ class Trainer:
             use_buffer_states=self.config.use_buffer_states,
             # Gradient clipping
             gradient_clip_norm=self.config.gradient_clip_norm,
+            # Learning rate scheduling
+            lr_scheduler_type=self.config.lr_scheduler_type,
+            lr_decay_rate=self.config.lr_decay_rate,
+            lr_decay_steps=self.config.lr_decay_steps,
+            lr_target_surprise=self.config.lr_target_surprise,
+            lr_surprise_width=self.config.lr_surprise_width,
+            lr_surprise_scale=self.config.lr_surprise_scale,
         )
 
         # Create optimizers if specified
