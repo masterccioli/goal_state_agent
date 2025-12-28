@@ -287,3 +287,15 @@ CARTPOLE_SURPRISE = TrainingConfig(
     use_adaptive_lr=True,
     gradient_clip_norm=1.0,
 )
+
+# OPTIMAL configuration (validated with standard Gymnasium 1.2.3)
+# Key finding: 3 updates per step is optimal
+CARTPOLE_OPTIMAL = TrainingConfig(
+    action_update_steps=3,  # Optimal: better than 1, 5, or 10
+    prediction_update_steps=3,
+    action_learning_rate=0.5,
+    prediction_learning_rate=0.5,
+    use_adaptive_lr=True,
+    gradient_clip_norm=2.0,  # Reduces variance
+    use_replay_buffer=False,  # Critical: must be online
+)

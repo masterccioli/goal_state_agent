@@ -51,6 +51,7 @@ from .configs.config import (
     CARTPOLE_LR_DECAY,
     CARTPOLE_GOLDILOCKS,
     CARTPOLE_SURPRISE,
+    CARTPOLE_OPTIMAL,
 )
 from .training import Trainer, TrainingMetrics, train_agent
 from .core.layers import LinearLayer, TanhActivation, Network
@@ -95,6 +96,7 @@ __all__ = [
     "CARTPOLE_LR_DECAY",
     "CARTPOLE_GOLDILOCKS",
     "CARTPOLE_SURPRISE",
+    "CARTPOLE_OPTIMAL",
     # Convenience functions
     "train_agent",
     # Core components
